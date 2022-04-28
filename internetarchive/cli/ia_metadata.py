@@ -54,7 +54,7 @@ import sys
 from collections import defaultdict
 from copy import copy
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from schema import And, Or, Schema, SchemaError, Use
 
 from internetarchive.cli.argparser import (
@@ -180,7 +180,7 @@ def main(argv, session):
     try:
         args = s.validate(args)
     except SchemaError as exc:
-        print(f'{exc}\n{printable_usage(__doc__)}', file=sys.stderr)
+        print(repr(exc), file=sys.stderr)
         sys.exit(1)
 
     formats = set()

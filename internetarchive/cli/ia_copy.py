@@ -39,7 +39,7 @@ options:
 import sys
 from urllib.parse import quote
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from schema import And, Or, Schema, SchemaError, Use
 
 import internetarchive as ia
@@ -95,8 +95,7 @@ def main(argv, session, cmd='copy'):
     except SchemaError as exc:
         # This module is sometimes called by other modules.
         # Replace references to 'ia copy' in ___doc__ to 'ia {cmd}' for clarity.
-        usage = printable_usage(__doc__.replace('ia copy', f'ia {cmd}'))
-        print(f'{exc}\n{usage}', file=sys.stderr)
+        print(f'ia {cmd} raised {exc}', file=sys.stderr)
         sys.exit(1)
 
     args['--header']['x-amz-copy-source'] = f'/{quote(src_path)}'

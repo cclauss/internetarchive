@@ -70,7 +70,7 @@ from copy import deepcopy
 from locale import getpreferredencoding
 from tempfile import TemporaryFile
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from requests.exceptions import HTTPError
 from schema import And, Or, Schema, SchemaError, Use
 
@@ -150,7 +150,7 @@ def main(argv, session):
     try:
         args = s.validate(args)
     except SchemaError as exc:
-        print(f'{exc}\n{printable_usage(__doc__)}', file=sys.stderr)
+        print(repr(exc), file=sys.stderr)
         sys.exit(1)
 
     # Make sure the collection being uploaded to exists.
@@ -161,8 +161,7 @@ def main(argv, session):
         collection = session.get_item(collection_id)
         if not collection.exists:
             print('You must upload to a collection that exists. '
-                  f'"{collection_id}" does not exist.\n{printable_usage(__doc__)}',
-                  file=sys.stderr)
+                  f'"{collection_id}" does not exist.', file=sys.stderr)
             sys.exit(1)
 
     # Status check.

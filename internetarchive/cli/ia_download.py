@@ -65,7 +65,7 @@ import os
 import sys
 from os.path import exists as dir_exists
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from schema import And, Or, Schema, SchemaError, Use
 
 from internetarchive.cli.argparser import get_args_dict
@@ -103,7 +103,7 @@ def main(argv, session):
                 raise(SchemaError(None, '--glob and --format cannot be used together.'))
 
     except SchemaError as exc:
-        print(f'{exc}\n{printable_usage(__doc__)}', file=sys.stderr)
+        print(repr(exc), file=sys.stderr)
         sys.exit(1)
 
     retries = int(args['--retries'])

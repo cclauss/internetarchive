@@ -35,7 +35,7 @@ options:
 """
 import sys
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from schema import And, Or, Schema, SchemaError, Use
 
 from internetarchive.cli import ia_copy
@@ -61,7 +61,7 @@ def main(argv, session):
     try:
         args = s.validate(args)
     except SchemaError as exc:
-        print(f'{exc}\n{printable_usage(__doc__)}', file=sys.stderr)
+        print(repr(exc), file=sys.stderr)
         sys.exit(1)
 
     # Add keep-old-version by default.

@@ -62,7 +62,7 @@ import errno
 import os
 import sys
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from pkg_resources import DistributionNotFound, iter_entry_points
 from schema import Or, Schema, SchemaError
 
@@ -124,7 +124,7 @@ def main():
     try:
         args = s.validate(args)
     except SchemaError as exc:
-        print(f'{exc}\n{printable_usage(__doc__)}', file=sys.stderr)
+        print(repr(exc), file=sys.stderr)
         sys.exit(1)
 
     # Get subcommand.
@@ -141,8 +141,7 @@ def main():
 
     if cmd != 'configure' and args['--config-file']:
         if not os.path.isfile(args['--config-file']):
-            print(f'--config-file should be a readable file.\n{printable_usage(__doc__)}',
-                  file=sys.stderr)
+            print('--config-file should be a readable file.', file=sys.stderr)
             sys.exit(1)
 
     argv = [cmd] + args['<args>']

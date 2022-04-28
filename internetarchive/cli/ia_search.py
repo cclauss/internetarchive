@@ -45,7 +45,7 @@ examples:
 import sys
 from itertools import chain
 
-from docopt import docopt, printable_usage
+from docopt import docopt
 from requests.exceptions import ConnectTimeout, ReadTimeout
 from schema import And, Or, Schema, SchemaError, Use
 
@@ -73,7 +73,7 @@ def main(argv, session=None):
     try:
         args = s.validate(args)
     except SchemaError as exc:
-        print(f'{exc}\n{printable_usage(__doc__)}', file=sys.stderr)
+        print(repr(exc), file=sys.stderr)
         sys.exit(1)
 
     # Support comma separated values.
