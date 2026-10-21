@@ -142,7 +142,7 @@ def test_metadata_request_patch_key(sample_metadata):
             url=f"{PROTOCOL}//archive.org/metadata/test_item",
         )
         prepared = req.prepare()
-        assert any(k.endswith('-patch') for k in prepared.data)
+        assert b'-patch=' in prepared.content
 
 
 @pytest.mark.parametrize(

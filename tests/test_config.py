@@ -4,12 +4,11 @@ import tempfile
 from unittest import mock
 
 import pytest
-import requests.adapters
-import responses
 
 import internetarchive.config
 import internetarchive.session
 from internetarchive.exceptions import AuthenticationError
+from tests.httpx2_mock import responses
 
 
 @responses.activate

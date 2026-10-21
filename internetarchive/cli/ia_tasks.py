@@ -23,7 +23,7 @@ import argparse
 import sys
 import warnings
 
-from requests.exceptions import RequestException
+from httpx2 import HTTPError as RequestException
 
 from internetarchive.cli.cli_utils import PostDataAction, QueryStringAction
 from internetarchive.utils import json

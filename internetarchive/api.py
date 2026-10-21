@@ -31,7 +31,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, MutableMapping
 from getpass import getpass
 
-import requests
+import httpx2
 from urllib3 import Retry
 
 from internetarchive import auth, catalog, files, item, search, session
@@ -188,7 +188,7 @@ def modify_metadata(
     debug: bool = False,
     request_kwargs: Mapping | None = None,
     **get_item_kwargs,
-) -> requests.Request | requests.Response:
+) -> httpx2.Request | httpx2.Response:
     r"""Modify the metadata of an existing item on Archive.org.
 
     :param identifier: The globally unique Archive.org identifier for a given item.
@@ -249,7 +249,7 @@ def upload(
     validate_identifier: bool = False,
     request_kwargs: dict | None = None,
     **get_item_kwargs,
-) -> list[requests.Request | requests.Response]:
+) -> list[httpx2.Request | httpx2.Response]:
     r"""Upload files to an item. The item will be created if it does not exist.
 
     :param identifier: The globally unique Archive.org identifier for a given item.
@@ -336,7 +336,7 @@ def download(
     count_views: bool = False,
     headers: Mapping | None = None,
     **get_item_kwargs,
-) -> list[requests.Request | requests.Response]:
+) -> list[httpx2.Request | httpx2.Response]:
     r"""Download files from an item.
 
     :param identifier: The globally unique Archive.org identifier for a given item.
@@ -431,7 +431,7 @@ def delete(
     verbose: bool = False,
     debug: bool = False,
     **kwargs,
-) -> list[requests.Request | requests.Response]:
+) -> list[httpx2.Request | httpx2.Response]:
     """Delete files from an item. Note: Some system files, such as <itemname>_meta.xml,
     cannot be deleted.
 
@@ -639,7 +639,7 @@ def get_user_info(access_key: str, secret_key: str) -> dict[str, str]:
     """
     u = "https://s3.us.archive.org"
     p = {"check_auth": 1}
-    r = requests.get(u, params=p, auth=auth.S3Auth(access_key, secret_key), timeout=10)
+    r = httpx2.get(u, params=p, auth=auth.S3Auth(access_key, secret_key), timeout=10)
     r.raise_for_status()
     j = r.json()
     if j.get("error"):

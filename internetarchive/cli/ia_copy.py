@@ -26,7 +26,7 @@ import sys
 from typing import Optional
 from urllib.parse import quote
 
-from requests import Response
+from httpx2 import Response
 
 import internetarchive as ia
 from internetarchive.cli.cli_utils import MetadataAction, QueryStringAction

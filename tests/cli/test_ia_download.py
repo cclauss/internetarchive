@@ -5,7 +5,6 @@ import sys
 import time
 
 import pytest
-import responses
 
 from internetarchive import get_item
 from internetarchive.cli.ia_download import (
@@ -23,6 +22,7 @@ from tests.conftest import (
     ia_call,
     load_test_data_file,
 )
+from tests.httpx2_mock import responses
 
 
 @pytest.mark.network

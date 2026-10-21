@@ -42,8 +42,9 @@ from typing import Optional
 from urllib.parse import quote, urlparse
 from xml.parsers.expat import ExpatError
 
-from requests import Request, Response
-from requests.exceptions import HTTPError
+import httpx2
+from httpx2 import HTTPStatusError as HTTPError
+from httpx2 import Request, Response
 from tqdm import tqdm
 
 from internetarchive import catalog, exceptions
@@ -1120,7 +1121,7 @@ class Item(BaseItem):
                                  not run for a long time. Note that you still may be
                                  subject to rate-limiting.
 
-        :returns: A Request if debug else a Response.
+        :returns: An HTTPX2 Request if debug else a Response.
 
         Usage::
 
@@ -1379,7 +1380,7 @@ class Item(BaseItem):
                 # Return an empty response object if checksums match.
                 # TODO: Is there a better way to handle this?
                 body.close()
-                return Response()
+                return Response(200)
 
         # require the Content-MD5 header when delete is True.
         if verify or delete:
@@ -1436,7 +1437,7 @@ class Item(BaseItem):
             return request
 
         if debug:
-            prepared_request = self.session.prepare_request(_build_request())
+            prepared_request = _build_request().prepare()
             body.close()
             return prepared_request
         else:
@@ -1482,6 +1483,7 @@ class Item(BaseItem):
                         prepared_request, stream=True, **request_kwargs
                     )
                     if (response.status_code == 503) and (retries > 0):
+                        response.read()
                         if b'appears to be spam' in response.content:
                             log.info('detected as spam, upload failed')
                             break
@@ -1543,19 +1545,7 @@ class Item(BaseItem):
                         'Connection', 'not-set'
                     )
 
-                    # Check if urllib3 pooled the connection for this host
-                    adapter = self.session.get_adapter(prepared_request.url)
-                    if hasattr(adapter, 'poolmanager'):
-                        pool_key = adapter.poolmanager._get_pool_key(  # noqa: SLF001
-                            prepared_request.url, None
-                        )
-                        pool = adapter.poolmanager.pools.get(pool_key)
-                        if pool:
-                            pool_status = f"requests={pool.num_requests}"
-                        else:
-                            pool_status = "no-pool"
-                    else:
-                        pool_status = "no-poolmanager"
+                    pool_status = 'managed by HTTPX2'
                 except Exception:
                     log.debug(
                         'error gathering diagnostic info for connection reset error, '
@@ -1577,6 +1567,8 @@ class Item(BaseItem):
                 raise ConnectionResetError(error_msg) from exc
             except HTTPError as exc:
                 try:
+                    if exc.response is not None and not exc.response.is_stream_consumed:
+                        exc.response.read()
                     msg = get_s3_xml_text(exc.response.content)  # type: ignore
                 except (
                     ExpatError

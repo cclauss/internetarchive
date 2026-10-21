@@ -5,13 +5,17 @@ from subprocess import PIPE, Popen
 from urllib.parse import quote
 
 import pytest
-import responses
-from responses import RequestsMock
 
 from internetarchive import get_session
 from internetarchive.api import get_item
 from internetarchive.cli import ia
 from internetarchive.utils import json
+from tests.httpx2_mock import (
+    RequestsMock,
+    bind_httpx_mock,
+    responses,
+    unbind_httpx_mock,
+)
 
 PROTOCOL = 'https:'
 BASE_URL = 'https://archive.org/'
@@ -84,7 +88,7 @@ class IaRequestsMock(RequestsMock):
         protocol='https?',
         transform_body=None,
     ):
-        # requests percent-encodes non-ASCII identifiers in the URL, so match
+        # HTTPX2 percent-encodes non-ASCII identifiers in the URL, so match
         # the quoted form; re.escape guards regex metachars (e.g. '.') in ids.
         url = re.compile(
             rf'{protocol}://archive\.org/metadata/{re.escape(quote(identifier))}'
@@ -117,6 +121,13 @@ def nasa_mocker():
 @pytest.fixture
 def session():
     return get_session(config={'s3': {'access': 'access', 'secret': 'secret'}})
+
+
+@pytest.fixture(autouse=True)
+def bind_httpx2_mock(httpx2_mock):
+    token = bind_httpx_mock(httpx2_mock)
+    yield
+    unbind_httpx_mock(token)
 
 
 @pytest.fixture

@@ -20,7 +20,7 @@
 internetarchive.auth
 ~~~~~~~~~~~~~~~~~~~~
 
-This module contains the Archive.org authentication handlers for Requests.
+This module contains the Archive.org authentication handlers for HTTPX2.
 
 :copyright: (C) 2012-2024 by Internet Archive.
 :license: AGPL 3, see LICENSE for more details.
@@ -28,12 +28,12 @@ This module contains the Archive.org authentication handlers for Requests.
 
 from __future__ import annotations
 
-from requests.auth import AuthBase
+import httpx2
 
 from internetarchive.exceptions import AuthenticationError
 
 
-class S3Auth(AuthBase):
+class S3Auth(httpx2.Auth):
     """Authentication handler for IA-S3 requests.
 
     Attaches ``LOW`` authorization header to requests, which is
@@ -47,14 +47,14 @@ class S3Auth(AuthBase):
     Usage::
 
         >>> auth = S3Auth('my_access_key', 'my_secret_key')
-        >>> response = requests.get(url, auth=auth)
+        >>> response = httpx2.get(url, auth=auth)
     """
 
     def __init__(self, access_key: str | None = None, secret_key: str | None = None):
         self.access_key = access_key
         self.secret_key = secret_key
 
-    def __call__(self, r):
+    def auth_flow(self, request):
         if not self.access_key:
             if self.secret_key:
                 raise AuthenticationError(
@@ -71,11 +71,11 @@ class S3Auth(AuthBase):
                 )
 
         auth_str = f'LOW {self.access_key}:{self.secret_key}'
-        r.headers['Authorization'] = auth_str
-        return r
+        request.headers['Authorization'] = auth_str
+        yield request
 
 
-class S3PostAuth(AuthBase):
+class S3PostAuth(httpx2.Auth):
     """Authentication handler for IA-S3 POST requests (metadata writes).
 
     Appends credentials to the request body as form parameters rather
@@ -89,10 +89,17 @@ class S3PostAuth(AuthBase):
         self.access_key = access_key
         self.secret_key = secret_key
 
-    def __call__(self, r):
+    def auth_flow(self, request):
         auth_str = f'&access={self.access_key}&secret={self.secret_key}'
-        if not r.body:
-            r.body = ''
-        r.body += auth_str
-        r.headers['content-type'] = 'application/x-www-form-urlencoded'
-        return r
+        content = request.read() + auth_str.encode()
+        headers = dict(request.headers)
+        headers.pop('content-length', None)
+        headers['content-type'] = 'application/x-www-form-urlencoded'
+        request = httpx2.Request(
+            request.method,
+            request.url,
+            content=content,
+            headers=headers,
+            extensions=request.extensions,
+        )
+        yield request

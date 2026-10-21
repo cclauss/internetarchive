@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from configparser import RawConfigParser
 from time import sleep
 
-import requests
+import httpx2
 
 from internetarchive import auth
 from internetarchive.exceptions import AuthenticationError
@@ -54,7 +54,7 @@ def get_auth_config(email: str, password: str, host: str = 'archive.org') -> dic
     u = f'https://{host}/services/xauthn/'
     p = {'op': 'login'}
     d = {'email': email, 'password': password}
-    r = requests.post(u, params=p, data=d, timeout=10)
+    r = httpx2.post(u, params=p, data=d, timeout=10)
     sleep(2)
     j = r.json()
     if not j.get('success'):

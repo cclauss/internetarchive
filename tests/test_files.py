@@ -3,12 +3,13 @@ import re
 from unittest.mock import patch
 
 import pytest
-import responses
-from requests.exceptions import HTTPError, ReadTimeout
+from httpx2 import HTTPStatusError as HTTPError
+from httpx2 import ReadTimeout
 
 from internetarchive.exceptions import DirectoryTraversalError
 from internetarchive.utils import sanitize_filename
 from tests.conftest import DOWNLOAD_URL_RE, PROTOCOL, IaRequestsMock
+from tests.httpx2_mock import responses
 
 EXPECTED_LAST_MOD_HEADER = {"Last-Modified": "Tue, 14 Nov 2023 20:25:48 GMT"}
 
