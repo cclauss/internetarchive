@@ -33,9 +33,9 @@ from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from datetime import datetime
 from logging import getLogger
 
-import requests
-from requests import Response
-from requests.exceptions import HTTPError
+import httpx2
+from httpx2 import HTTPStatusError as HTTPError
+from httpx2 import Response
 
 from internetarchive import auth
 from internetarchive import session as ia_session
@@ -58,7 +58,7 @@ FOLLOW_MAX_CONSECUTIVE_ERRORS = 5
 ACTIVE_TASK_STATUSES = frozenset({'running', 'queued', 'paused'})
 
 
-def _is_transient_error(exc: requests.exceptions.RequestException) -> bool:
+def _is_transient_error(exc: httpx2.HTTPError) -> bool:
     """Return ``True`` if ``exc`` is a transient failure worth retrying.
 
     Connection errors, premature chunked responses, timeouts, and 5xx
@@ -74,9 +74,9 @@ def _is_transient_error(exc: requests.exceptions.RequestException) -> bool:
     return isinstance(
         exc,
         (
-            requests.exceptions.ConnectionError,
-            requests.exceptions.ChunkedEncodingError,
-            requests.exceptions.Timeout,
+            httpx2.ConnectError,
+            httpx2.RemoteProtocolError,
+            httpx2.TimeoutException,
         ),
     )
 
@@ -122,8 +122,8 @@ class Catalog:
                                 object.
 
         :param request_kwargs: Keyword arguments to be used
-                               in :meth:`requests.sessions.Session.get`
-                               and :meth:`requests.sessions.Session.post`
+                               in :meth:`httpx2.Client.get`
+                               and :meth:`httpx2.Client.post`
                                requests.
         """
         self.session = archive_session
@@ -165,7 +165,7 @@ class Catalog:
                        <https://archive.org/services/docs/api/tasks.html>`_
                        for available parameters.
 
-        :returns: :class:`requests.Response`
+        :returns: :class:`httpx2.Response`
         """
         r = self.session.get(
             self.url, params=params, auth=self.auth, **self.request_kwargs
@@ -175,7 +175,7 @@ class Catalog:
         except HTTPError as exc:
             j = r.json()
             error = j['error']
-            raise HTTPError(error, response=r)
+            raise HTTPError(error, response=r)  # type: ignore[call-arg]
         return r
 
     def iter_tasks(self, params: MutableMapping | None = None) -> Iterable[CatalogTask]:
@@ -212,8 +212,8 @@ class Catalog:
         r = self.make_tasks_request(params)
         line = ''
         tasks = []
-        for c in r.iter_content():
-            c = c.decode('utf-8')
+        for c_bytes in r.iter_bytes():
+            c = c_bytes.decode('utf-8')
             if c == '\n':
                 j = json.loads(line)
                 task = CatalogTask(j, self)
@@ -249,8 +249,8 @@ class Catalog:
         r = self.make_tasks_request(params)
         line = ''
         tasks = []
-        for c in r.iter_content():
-            c = c.decode('utf-8')
+        for c_bytes in r.iter_bytes():
+            c = c_bytes.decode('utf-8')
             if c == '\n':
                 j = json.loads(line)
                 task = CatalogTask(j, self)
@@ -294,7 +294,7 @@ class Catalog:
 
         :param headers: Add additional headers to request.
 
-        :returns: :class:`requests.Response`
+        :returns: :class:`httpx2.Response`
         """
         data = data or {}
         data.update({'cmd': cmd, 'identifier': identifier})
@@ -507,7 +507,7 @@ class CatalogTask:
         :raises ValueError: If ``lines`` is positive (the head of the log
             cannot be followed; use a negative value for the last N lines).
 
-        :raises requests.exceptions.RequestException: On a fatal request
+        :raises httpx2.HTTPError: On a fatal request
             error, or when transient errors persist for
             ``FOLLOW_MAX_CONSECUTIVE_ERRORS`` consecutive polls.
         """
@@ -597,7 +597,7 @@ class CatalogTask:
                         if new:
                             to_yield.append(new)
                     stop = True
-            except requests.exceptions.RequestException as exc:
+            except httpx2.HTTPError as exc:
                 if not _is_transient_error(exc):
                     raise
                 consecutive_errors += 1

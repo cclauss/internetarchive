@@ -36,24 +36,18 @@ import platform
 import socket
 import sys
 import threading
-import warnings
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
-import requests
-import requests.sessions
-from requests import Response
-from requests.adapters import HTTPAdapter
-from requests.cookies import create_cookie
-from requests.exceptions import RequestException
-from requests.utils import default_headers
+import httpx2
+from httpx2 import Response
 from urllib3 import Retry
 
 from internetarchive import __version__, auth, catalog
 from internetarchive.config import get_config
 from internetarchive.item import Collection, Item
 from internetarchive.search import Search
-from internetarchive.utils import parse_dict_cookies, reraise_modify
+from internetarchive.utils import parse_dict_cookies
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +56,12 @@ _SOCKET_ALREADY_PATCHED = False
 _active_session_local = threading.local()  # shared thread-local for all sessions
 
 
-class ArchiveSession(requests.sessions.Session):
+class ArchiveSession(httpx2.Client):
     """The :class:`ArchiveSession <internetarchive.ArchiveSession>`
     object collects together useful functionality from `internetarchive`
     as well as important data such as configuration information and
     credentials.  It is subclassed from
-    :class:`requests.Session <requests.Session>`.
+    :class:`httpx2.Client <httpx2.Client>`.
 
     Usage::
 
@@ -108,7 +102,7 @@ class ArchiveSession(requests.sessions.Session):
 
         :returns: :class:`ArchiveSession` object.
         """
-        super().__init__()
+        super().__init__(timeout=None, follow_redirects=True)
         http_adapter_kwargs = http_adapter_kwargs or {}
         debug = bool(debug)
 
@@ -119,13 +113,12 @@ class ArchiveSession(requests.sessions.Session):
             cookie_dict = parse_dict_cookies(raw_cookie)
             if not cookie_dict.get(ck):
                 continue
-            cookie = create_cookie(
+            self.cookies.set(
                 ck,
-                cookie_dict[ck],
-                domain=cookie_dict.get('domain', '.archive.org'),
-                path=cookie_dict.get('path', '/'),
+                str(cookie_dict[ck] or ''),
+                domain=str(cookie_dict.get('domain', '.archive.org')),
+                path=str(cookie_dict.get('path', '/')),
             )
-            self.cookies.set_cookie(cookie)
 
         self.secure: bool = self.config.get('general', {}).get('secure', True)
         self.host: str = self.config.get('general', {}).get('host', 'archive.org')
@@ -141,7 +134,6 @@ class ArchiveSession(requests.sessions.Session):
         self.secret_key: str = self.config.get('s3', {}).get('secret')
         self.http_adapter_kwargs: MutableMapping = http_adapter_kwargs or {}
 
-        self.headers = default_headers()  # type: ignore[assignment]
         default_user_agent = self._get_user_agent_string()
         user_agent_suffix = self.config.get('general', {}).get('user_agent_suffix')
         if user_agent_suffix:
@@ -236,22 +228,6 @@ class ArchiveSession(requests.sessions.Session):
             f'Python/{py_version}'
         )
 
-    def rebuild_auth(self, prepared_request, response):
-        """Rebuild authentication for redirects, except for archive.org URLs.
-
-        This override prevents stripping authentication headers when following
-        redirects to archive.org domains. For other domains, the default
-        requests behavior is used (which removes auth headers on redirect
-        to a different host for security).
-
-        :param prepared_request: The redirected request being prepared.
-        :param response: The response that triggered the redirect.
-        """
-        u = urlparse(prepared_request.url)
-        if u.netloc.endswith('archive.org'):
-            return
-        super().rebuild_auth(prepared_request, response)
-
     def mount_http_adapter(
         self,
         protocol: str | None = None,
@@ -259,43 +235,26 @@ class ArchiveSession(requests.sessions.Session):
         status_forcelist: list | None = None,
         host: str | None = None,
     ) -> None:
-        """Mount an HTTP adapter to the
-        :class:`ArchiveSession <ArchiveSession>` object.
+        """Configure connection retries on the HTTPX2 transport.
 
-        :param protocol: HTTP protocol to mount your adapter to (e.g. 'https://').
+        :param protocol: Retained for compatibility; HTTPX2 configures transports
+                         on the client rather than mounting adapters.
 
         :param max_retries: The number of times to retry a failed request.
                             This can also be an `urllib3.Retry` object.
 
-        :param status_forcelist: A list of status codes (as int's) to retry on.
+        :param status_forcelist: Retained for compatibility; HTTPX2 retries
+                                 connection failures only.
 
-        :param host: The host to mount your adapter to.
+        :param host: Retained for compatibility; HTTPX2 uses one client transport.
         """
-        protocol = protocol or self.protocol
-        host = host or 'archive.org'
         if max_retries is None:
             max_retries = self.http_adapter_kwargs.get('max_retries', 3)
-
-        status_forcelist = status_forcelist or [429, 500, 501, 502, 503, 504]
-        if max_retries and isinstance(max_retries, (int, float)):
-            self.http_adapter_kwargs['max_retries'] = Retry(
-                total=max_retries,
-                connect=max_retries,
-                read=max_retries,
-                redirect=False,
-                allowed_methods=["POST", "HEAD", "GET", "OPTIONS"],
-                status_forcelist=status_forcelist,
-                backoff_factor=1,
-                respect_retry_after_header=True,
-            )
-
-        else:
-            self.http_adapter_kwargs['max_retries'] = max_retries
-
-        max_retries_adapter = HTTPAdapter(**self.http_adapter_kwargs)
-        # Don't mount on s3.us.archive.org, only archive.org!
-        # IA-S3 requires a more complicated retry workflow.
-        self.mount(f'{protocol}//{host}', max_retries_adapter)
+        if isinstance(max_retries, Retry):
+            max_retries = max_retries.total
+        self.max_retries = int(max_retries or 0)
+        self._transport.close()
+        self._transport = httpx2.HTTPTransport(retries=self.max_retries)
 
     def set_file_logger(
         self, log_level: str, path: str, logger_name: str = 'internetarchive'
@@ -374,7 +333,7 @@ class ArchiveSession(requests.sessions.Session):
 
         # Do not use self/Session.get() here,
         # to make sure S3 keys are used for validation -- not cookies.
-        r = requests.get(
+        r = httpx2.get(
             u, params=p, auth=auth.S3Auth(self.access_key, self.secret_key), timeout=12
         )
 
@@ -433,7 +392,13 @@ class ArchiveSession(requests.sessions.Session):
         except Exception as exc:
             error_msg = f'Error retrieving metadata from {url}, {exc}'
             logger.error(error_msg)
-            raise type(exc)(error_msg)
+            if isinstance(exc, httpx2.HTTPStatusError):
+                raise httpx2.HTTPStatusError(
+                    error_msg, request=exc.request, response=exc.response
+                ) from exc
+            if isinstance(exc, httpx2.RequestError):
+                raise type(exc)(error_msg, request=exc.request) from exc
+            raise
         return resp.json()
 
     def search_items(
@@ -536,7 +501,7 @@ class ArchiveSession(requests.sessions.Session):
         headers: dict | None = None,
         reduced_priority: bool = False,
         request_kwargs: Mapping | None = None,
-    ) -> requests.Response:
+    ) -> httpx2.Response:
         """Submit an archive.org task.
 
         :param identifier: Item identifier.
@@ -780,43 +745,27 @@ class ArchiveSession(requests.sessions.Session):
             task_id, self, lines=lines, params=params, request_kwargs=request_kwargs
         )
 
-    def send(self, request, **kwargs) -> Response:
-        """Send a prepared request, handling HTTPS security warnings.
+    def request(self, method, url, *, stream=False, timeout=None, **kwargs):
+        """Send a request, optionally leaving its response body unconsumed."""
+        if not stream:
+            return super().request(method, url, timeout=timeout, **kwargs)
+        auth = kwargs.pop('auth', httpx2.USE_CLIENT_DEFAULT)
+        follow_redirects = kwargs.pop('follow_redirects', httpx2.USE_CLIENT_DEFAULT)
+        request = self.build_request(method, url, timeout=timeout, **kwargs)
+        return self.send(
+            request, stream=True, auth=auth, follow_redirects=follow_redirects
+        )
 
-        Overrides :meth:`requests.Session.send` to catch and handle
-        urllib3 warnings about insecure HTTPS connections.
+    def send(self, request, *, stream=False, timeout=None, **kwargs) -> Response:
+        """Send an HTTPX2 request, optionally streaming the response body."""
+        if timeout is not None:
+            request.extensions['timeout'] = httpx2.Timeout(timeout).as_dict()
+        return super().send(request, stream=stream, **kwargs)
 
-        :param request: The :class:`PreparedRequest` to send.
-        :param kwargs: Additional arguments passed to the parent ``send()`` method.
-        :returns: The :class:`Response` object.
-        :raises requests.exceptions.RequestException: If the platform has insecure
-                                                      HTTPS configuration.
-        """
-        # Catch urllib3 warnings for HTTPS related errors.
-        insecure = False
-        with warnings.catch_warnings(record=True) as w:
-            warnings.filterwarnings('always')
-            try:
-                r = super().send(request, **kwargs)
-            except Exception as e:
-                try:
-                    reraise_modify(e, e.request.url, prepend=False)  # type: ignore
-                except Exception:
-                    logger.error(e)
-                    raise e
-            if self.protocol == 'http:':
-                return r
-            insecure_warnings = ['SNIMissingWarning', 'InsecurePlatformWarning']
-            if w:
-                for warning in w:
-                    if any(x in str(warning) for x in insecure_warnings):
-                        insecure = True
-                        break
-        if insecure:
-            msg = (
-                'You are attempting to make an HTTPS request on an insecure platform,'
-                ' please see:\n\n\thttps://archive.org/services/docs/api'
-                '/internetarchive/troubleshooting.html#https-issues\n'
-            )
-            raise RequestException(msg)
-        return r
+    def get(self, url, *, stream=False, **kwargs):
+        """Send a GET request, optionally streaming the response body."""
+        return self.request('GET', url, stream=stream, **kwargs)
+
+    def prepare_request(self, request):
+        """Return a request builder's HTTPX2 request unchanged."""
+        return request

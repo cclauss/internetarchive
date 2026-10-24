@@ -2,8 +2,6 @@ import os
 import re
 
 import pytest
-import responses
-import urllib3
 
 from internetarchive import (
     download,
@@ -22,6 +20,7 @@ from tests.conftest import (
     load_file,
     load_test_data_file,
 )
+from tests.httpx2_mock import responses
 
 TEST_SEARCH_RESPONSE = load_test_data_file('advanced_search_response.json')
 TEST_SCRAPE_RESPONSE = load_test_data_file('scrape_response.json')
@@ -76,9 +75,7 @@ def test_get_item_with_kwargs():
     with IaRequestsMock(assert_all_requests_are_fired=False) as rsps:
         rsps.add_metadata_mock('nasa')
         item = get_item('nasa', http_adapter_kwargs={'max_retries': 13})
-        assert isinstance(
-            item.session.adapters[f'{PROTOCOL}//'].max_retries, urllib3.Retry
-        )
+        assert item.session.max_retries == 13
 
 
 @pytest.mark.network

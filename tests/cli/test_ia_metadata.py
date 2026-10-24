@@ -1,9 +1,8 @@
 import sys
 from time import time
 
-import responses
-
 from tests.conftest import IaRequestsMock, ia_call
+from tests.httpx2_mock import responses
 
 
 def test_ia_metadata_exists(capsys):

@@ -25,7 +25,7 @@ import argparse
 import sys
 from itertools import chain
 
-from requests.exceptions import ConnectTimeout, ReadTimeout
+from httpx2 import ConnectTimeout, ReadTimeout
 
 from internetarchive.cli.cli_utils import FlattenListAction, QueryStringAction
 from internetarchive.exceptions import AuthenticationError

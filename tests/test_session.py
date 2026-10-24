@@ -1,10 +1,9 @@
 import os
 
-import responses
-
 import internetarchive.session
 from internetarchive import __version__
 from tests.conftest import NASA_METADATA_PATH, PROTOCOL, IaRequestsMock
+from tests.httpx2_mock import responses
 
 CONFIG = {
     's3': {
@@ -75,7 +74,7 @@ def test_get_item(tmpdir):
             item = s.get_item('nasa')
         except Exception:
             with open('test.log') as fh:
-                assert '400 Client Error' in fh.read()
+                assert '400 Bad Request' in fh.read()
 
 
 def test_s3_is_overloaded():
@@ -214,7 +213,7 @@ def test_cookies():
         r = s.get(f'{PROTOCOL}//archive.org')
         assert 'logged-in-sig' in r.request.headers['Cookie']
         assert 'logged-in-user' in r.request.headers['Cookie']
-        for c in s.cookies:
+        for c in s.cookies.jar:
             if c.name.startswith('logged-in-'):
                 assert c.domain == '.archive.org'
 

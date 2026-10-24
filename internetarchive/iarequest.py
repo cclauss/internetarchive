@@ -29,8 +29,7 @@ import logging
 import re
 from urllib.parse import quote
 
-import requests
-import requests.models
+import httpx2
 from jsonpatch import make_patch
 
 from internetarchive import __version__, auth
@@ -40,10 +39,22 @@ from internetarchive.utils import delete_items_from_dict, json, needs_quote
 logger = logging.getLogger(__name__)
 
 
-class S3Request(requests.models.Request):
+class _FileLikeStream(httpx2.SyncByteStream):
+    def __init__(self, file_obj):
+        self.file_obj = file_obj
+
+    def __iter__(self):
+        while chunk := self.file_obj.read(1024 * 1024):
+            yield chunk
+
+    def close(self):
+        pass
+
+
+class S3Request:
     """A Request object for IA-S3 uploads.
 
-    Extends :class:`requests.Request` to handle Archive.org S3-like
+    Builds an HTTPX2 request for Archive.org S3-like
     upload requests, including metadata headers and derive queue settings.
 
     :param metadata: Item-level metadata to set on upload.
@@ -52,7 +63,7 @@ class S3Request(requests.models.Request):
                         Defaults to ``True``.
     :param access_key: IA-S3 access key for authentication.
     :param secret_key: IA-S3 secret key for authentication.
-    :param kwargs: Additional arguments passed to :class:`requests.Request`.
+    :param kwargs: Additional arguments used to build an HTTPX2 request.
     """
 
     def __init__(
@@ -64,78 +75,52 @@ class S3Request(requests.models.Request):
         secret_key=None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
-
-        self.auth = self.auth or auth.S3Auth(access_key, secret_key)
+        self.auth = kwargs.pop('auth', None) or auth.S3Auth(access_key, secret_key)
+        self.method = kwargs.pop('method', None)
+        self.url = kwargs.pop('url', None)
+        self.headers = kwargs.pop('headers', None)
+        self.files = kwargs.pop('files', None)
+        self.data = kwargs.pop('data', None)
+        self.params = kwargs.pop('params', None)
+        self.cookies = kwargs.pop('cookies', None)
+        self.kwargs = kwargs
         self.metadata = metadata or {}
         self.file_metadata = file_metadata or {}
         self.queue_derive = queue_derive
 
     def prepare(self):
-        p = S3PreparedRequest()
-        p.prepare(
-            method=self.method,
-            url=self.url,
-            headers=self.headers,
-            files=self.files,
-            data=self.data,
-            params=self.params,
-            auth=self.auth,
-            cookies=self.cookies,
-            hooks=self.hooks,
-            # S3Request kwargs.
-            metadata=self.metadata,
-            file_metadata=self.file_metadata,
-            queue_derive=self.queue_derive,
-        )
-        return p
-
-
-class S3PreparedRequest(requests.models.PreparedRequest):
-    def prepare(
-        self,
-        method=None,
-        url=None,
-        headers=None,
-        files=None,
-        data=None,
-        params=None,
-        auth=None,
-        cookies=None,
-        hooks=None,
-        queue_derive=None,
-        metadata=None,
-        file_metadata=None,
-    ):
-        self.prepare_method(method)
-        self.prepare_url(url, params)
-        self.prepare_headers(headers, metadata, file_metadata, queue_derive)
-        self.prepare_cookies(cookies)
-        self.prepare_body(data, files)
-        self.prepare_auth(auth, url)
-        # Note that prepare_auth must be last to enable authentication schemes
-        # such as OAuth to work on a fully prepared request.
-
-        # This MUST go after prepare_auth. Authenticators could add a hook
-        self.prepare_hooks(hooks)
-
-    def prepare_headers(self, headers, metadata, file_metadata, queue_derive):
-        headers = headers.copy() if headers else {}
-        metadata = metadata.copy() if metadata else {}
-        file_metadata = file_metadata.copy() if file_metadata else {}
-
-        prepared_metadata = prepare_metadata(metadata)
-        prepared_file_metadata = prepare_metadata(file_metadata)
-
+        headers = dict(self.headers or {})
+        prepared_metadata = prepare_metadata(self.metadata)
+        prepared_file_metadata = prepare_metadata(self.file_metadata)
         headers.setdefault('x-archive-auto-make-bucket', '1')
-        headers['x-archive-queue-derive'] = '0' if queue_derive is False else '1'
-
+        headers['x-archive-queue-derive'] = '0' if self.queue_derive is False else '1'
         self._add_metadata_headers(headers, prepared_metadata, 'meta')
         self._add_metadata_headers(headers, prepared_file_metadata, 'filemeta')
+        body_kwarg = (
+            {'data': self.data}
+            if self.data is None or isinstance(self.data, dict)
+            else {
+                'content': (
+                    _FileLikeStream(self.data)
+                    if hasattr(self.data, 'read') and not isinstance(self.data, bytes)
+                    else self.data
+                )
+            }
+        )
+        request = httpx2.Request(
+            self.method or 'GET',
+            self.url,
+            headers=headers,
+            files=self.files,
+            params=self.params,
+            cookies=self.cookies,
+            **body_kwarg,
+            **self.kwargs,
+        )
+        return _apply_auth(request, self.auth)
 
-        super().prepare_headers(headers)
-
-    def _add_metadata_headers(self, headers, prepared_metadata, meta_type):
+    @staticmethod
+    def _add_metadata_headers(headers, prepared_metadata, meta_type):
         for key, values in prepared_metadata.items():
             if not isinstance(values, list):
                 values = [values]
@@ -148,11 +133,11 @@ class S3PreparedRequest(requests.models.PreparedRequest):
                 headers[header_key] = value
 
 
-class MetadataRequest(requests.models.Request):
+class MetadataRequest:
     """A Request object for metadata modifications.
 
-    Extends :class:`requests.Request` to handle Archive.org Metadata API
-    requests. Automatically generates JSON Patch operations from the
+    Builds requests for the Archive.org Metadata API and automatically
+    generates JSON Patch operations from the
     provided metadata.
 
     :param metadata: Metadata dict to apply to the item.
@@ -166,7 +151,7 @@ class MetadataRequest(requests.models.Request):
     :param append_list: Append values to existing list fields.
     :param insert: Insert values at specific list indices.
     :param reduced_priority: Submit at reduced priority to avoid rate limiting.
-    :param kwargs: Additional arguments passed to :class:`requests.Request`.
+    :param kwargs: Additional arguments used to build an HTTPX2 request.
     """
 
     def __init__(
@@ -184,9 +169,15 @@ class MetadataRequest(requests.models.Request):
         reduced_priority=None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
-
-        self.auth = self.auth or auth.S3PostAuth(access_key, secret_key)
+        self.auth = kwargs.pop('auth', None) or auth.S3PostAuth(access_key, secret_key)
+        self.method = kwargs.pop('method', None)
+        self.url = kwargs.pop('url', None)
+        self.headers = kwargs.pop('headers', None)
+        self.files = kwargs.pop('files', None)
+        self.data = kwargs.pop('data', None)
+        self.params = kwargs.pop('params', None)
+        self.cookies = kwargs.pop('cookies', None)
+        self.kwargs = kwargs
         self.metadata = metadata or {}
         self.source_metadata = source_metadata
         self.target = target
@@ -198,209 +189,139 @@ class MetadataRequest(requests.models.Request):
         self.reduced_priority = reduced_priority
 
     def prepare(self):
-        p = MetadataPreparedRequest()
-        p.prepare(
-            method=self.method,
-            url=self.url,
-            headers=self.headers,
-            files=self.files,
-            data=self.data,
-            params=self.params,
-            auth=self.auth,
-            cookies=self.cookies,
-            hooks=self.hooks,
-            # MetadataRequest kwargs.
-            metadata=self.metadata,
-            priority=self.priority,
-            source_metadata=self.source_metadata,
-            target=self.target,
-            append=self.append,
-            expect=self.expect,
-            append_list=self.append_list,
-            insert=self.insert,
-            reduced_priority=self.reduced_priority,
-        )
-        return p
-
-
-class MetadataPreparedRequest(requests.models.PreparedRequest):
-    def prepare(
-        self,
-        method=None,
-        url=None,
-        headers=None,
-        files=None,
-        data=None,
-        params=None,
-        auth=None,
-        cookies=None,
-        hooks=None,
-        metadata=None,
-        source_metadata=None,
-        target=None,
-        priority=None,
-        append=None,
-        expect=None,
-        append_list=None,
-        insert=None,
-        reduced_priority=None,
-    ):
-        # First handle our custom headers
-        if reduced_priority:
-            headers = headers.copy() if headers else {}
+        headers = dict(self.headers or {})
+        if self.reduced_priority:
             headers['X-Accept-Reduced-Priority'] = '1'
-
-        # Now run full parent preparation
-        super().prepare(
-            method=method,
-            url=url,
+        identifier = self.url.split('?')[0].split('/')[-1]
+        source_metadata = self.source_metadata
+        if not source_metadata:
+            response = httpx2.get(self.url, timeout=10)
+            response.raise_for_status()
+            source_metadata = response.json()
+        if _is_multi_target(self.metadata):
+            changes = _prepare_multi_target_changes(
+                self.metadata,
+                source_metadata,
+                self.target,
+                self.append,
+                self.expect,
+                self.append_list,
+                self.insert,
+            )
+            data = {'-changes': json.dumps(changes), 'priority': self.priority or -5}
+        else:
+            data = _prepare_single_target_body(
+                identifier,
+                self.metadata,
+                source_metadata,
+                self.target,
+                self.append,
+                self.append_list,
+                self.insert,
+                self.expect,
+                self.priority,
+            )
+        logger.debug(f'submitting metadata request: {data}')
+        request = httpx2.Request(
+            self.method or 'GET',
+            self.url,
             headers=headers,
-            files=files,
+            files=self.files,
             data=data,
-            params=params,
-            auth=auth,
-            cookies=cookies,
-            hooks=hooks,
+            params=self.params,
+            cookies=self.cookies,
+            **self.kwargs,
         )
+        return _apply_auth(request, self.auth)
 
-        # Now add our custom handling
-        self.identifier = self.url.split('?')[0].split('/')[-1]
-        self._prepare_request_body(
+
+def _apply_auth(request, auth_handler):
+    if isinstance(auth_handler, tuple):
+        auth_handler = httpx2.BasicAuth(*auth_handler)
+    if isinstance(auth_handler, httpx2.Auth):
+        return next(auth_handler.sync_auth_flow(request))
+    return request
+
+
+def _is_multi_target(metadata):
+    return (
+        isinstance(metadata, list)
+        or any('/' in k for k in metadata)
+        or all(isinstance(v, dict) for v in metadata.values())
+    )
+
+
+def _prepare_multi_target_changes(
+    metadata, source_metadata, target, append, expect, append_list, insert
+):
+    changes = []
+    if target:
+        metadata = {target: metadata}
+    for key in metadata:
+        patch = _get_patch_for_target(
+            key, metadata[key], source_metadata, append, expect, append_list, insert
+        )
+        changes.append({'target': key, 'patch': patch})
+    return changes
+
+
+def _prepare_single_target_body(
+    identifier,
+    metadata,
+    source_metadata,
+    target,
+    append,
+    append_list,
+    insert,
+    expect,
+    priority,
+):
+    target = target or 'metadata'
+    if target == 'metadata':
+        try:
+            patch = prepare_patch(
+                metadata,
+                source_metadata['metadata'],
+                append,
+                expect,
+                append_list,
+                insert,
+            )
+        except KeyError:
+            raise ItemLocateError(
+                f'{identifier} cannot be located because it is dark or does not exist.'
+            )
+    elif target.startswith('files/'):
+        patch = prepare_files_patch(
             metadata,
-            source_metadata,
+            source_metadata['files'],
             target,
-            priority,
             append,
             append_list,
             insert,
             expect,
         )
-        self.prepare_auth(auth, url)
-        # Note that prepare_auth must be last to enable authentication schemes
-        # such as OAuth to work on a fully prepared request.
-
-        # This MUST go after prepare_auth. Authenticators could add a hook
-        self.prepare_hooks(hooks)
-
-    def _prepare_request_body(
-        self,
-        metadata,
-        source_metadata,
-        target,
-        priority,
-        append,
-        append_list,
-        insert,
-        expect,
-    ):
-        if not source_metadata:
-            r = requests.get(self.url, timeout=10)
-            source_metadata = r.json()
-
-        if self._is_multi_target(metadata):
-            changes = self._prepare_multi_target_changes(
-                metadata,
-                source_metadata,
-                target,
-                append,
-                expect,
-                append_list,
-                insert,
-            )
-            self.data = {'-changes': json.dumps(changes), 'priority': priority or -5}
-        else:
-            self._prepare_single_target_body(
-                metadata,
-                source_metadata,
-                target,
-                append,
-                append_list,
-                insert,
-                expect,
-                priority,
-            )
-
-        logger.debug(f'submitting metadata request: {self.data}')
-        super().prepare_body(self.data, None)
-
-    def _is_multi_target(self, metadata):
-        return (
-            isinstance(metadata, list)
-            or any('/' in k for k in metadata)
-            or all(isinstance(v, dict) for v in metadata.values())
+    else:
+        patch = prepare_target_patch(
+            metadata, source_metadata, append, target, append_list, insert, expect
         )
+    return {
+        '-patch': json.dumps(patch),
+        '-target': target,
+        'priority': priority or -5,
+    }
 
-    def _prepare_multi_target_changes(
-        self, metadata, source_metadata, target, append, expect, append_list, insert
-    ):
-        changes = []
-        if target:
-            metadata = {target: metadata}
-        for key in metadata:
-            patch = self._get_patch_for_target(
-                key,
-                metadata[key],
-                source_metadata,
-                append,
-                expect,
-                append_list,
-                insert,
-            )
-            changes.append({'target': key, 'patch': patch})
-        return changes
 
-    def _prepare_single_target_body(
-        self,
-        metadata,
-        source_metadata,
-        target,
-        append,
-        append_list,
-        insert,
-        expect,
-        priority,
-    ):
-        target = target or 'metadata'
-        if target == 'metadata':
-            try:
-                patch = prepare_patch(
-                    metadata,
-                    source_metadata['metadata'],
-                    append,
-                    expect,
-                    append_list,
-                    insert,
-                )
-            except KeyError:
-                raise ItemLocateError(
-                    f'{self.identifier} cannot be located '
-                    'because it is dark or does not exist.'
-                )
-        elif target.startswith('files/'):
-            patch = prepare_files_patch(
-                metadata,
-                source_metadata['files'],
-                target,
-                append,
-                append_list,
-                insert,
-                expect,
-            )
-        else:
-            patch = prepare_target_patch(
-                metadata,
-                source_metadata,
-                append,
-                target,
-                append_list,
-                insert,
-                expect,
-            )
-        self.data = {
-            '-patch': json.dumps(patch),
-            '-target': target,
-            'priority': priority or -5,
-        }
+def _get_patch_for_target(
+    key, value, source_metadata, append, expect, append_list, insert
+):
+    if key.startswith('files/'):
+        return prepare_files_patch(
+            value, source_metadata['files'], key, append, append_list, insert, expect
+        )
+    return prepare_target_patch(
+        value, source_metadata, append, key, append_list, insert, expect
+    )
 
 
 def prepare_patch(

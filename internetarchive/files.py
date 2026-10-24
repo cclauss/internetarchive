@@ -34,12 +34,13 @@ from pathlib import Path
 from time import sleep
 from urllib.parse import quote
 
-from requests.exceptions import (
-    ConnectionError,
+from httpx2 import (
     ConnectTimeout,
-    HTTPError,
     ReadTimeout,
-    RetryError,
+    TransportError,
+)
+from httpx2 import (
+    HTTPStatusError as HTTPError,
 )
 from tqdm import tqdm
 
@@ -439,7 +440,7 @@ class File(BaseFile):
                 with fileobj, progress_bar as bar:
                     if resume:
                         fileobj.seek(st.st_size)
-                    for chunk in response.iter_content(chunk_size=chunk_size):
+                    for chunk in response.iter_bytes(chunk_size=chunk_size):
                         if chunk:
                             size = fileobj.write(chunk)
                             if bar is not None:
@@ -463,7 +464,7 @@ class File(BaseFile):
                         raise exceptions.InvalidChecksumError(msg)
                 break
             except (
-                RetryError,
+                TransportError,
                 HTTPError,
                 ConnectTimeout,
                 OSError,
@@ -564,32 +565,30 @@ class File(BaseFile):
             secret_key=secret_key,
         )
         if debug:
-            return request
+            return request.prepare()
         else:
             if verbose:
                 msg = f' deleting: {self.name}'
                 if cascade_delete == '1':
                     msg += ' and all derivative files.'
                 print(msg, file=sys.stderr)
-            prepared_request = self.item.session.prepare_request(request)
+            prepared_request = request.prepare()
 
             try:
                 resp = self.item.session.send(prepared_request)
                 resp.raise_for_status()
-            except (RetryError, HTTPError, ConnectTimeout, OSError, ReadTimeout) as exc:
+            except (
+                TransportError,
+                HTTPError,
+                ConnectTimeout,
+                OSError,
+                ReadTimeout,
+            ) as exc:
                 error_msg = f'Error deleting {url}, {exc}'
                 log.error(error_msg)
                 raise
             else:
                 return resp
-            finally:
-                # The retry adapter is mounted to the session object.
-                # Make sure to remove it after delete, so it isn't
-                # mounted if and when the session object is used for an
-                # upload. This is important because we use custom retry
-                # handling for IA-S3 uploads.
-                url_prefix = f'{self.item.session.protocol}//s3.us.archive.org'
-                del self.item.session.adapters[url_prefix]
 
 
 class OnTheFlyFile(File):

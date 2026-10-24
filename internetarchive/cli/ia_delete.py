@@ -22,8 +22,8 @@ ia_delete.py
 import argparse
 import sys
 
-import requests.exceptions
-from requests.exceptions import HTTPError
+import httpx2
+from httpx2 import HTTPStatusError as HTTPError
 
 from internetarchive.cli.cli_utils import (
     FlattenListAction,
@@ -168,7 +168,7 @@ def delete_files(files, args, item, verbose):
                 headers=args.header,
                 retries=args.retries,
             )
-        except requests.exceptions.RetryError:
+        except httpx2.TransportError:
             print(f" error: max retries exceeded for {f.name}", file=sys.stderr)
             errors = True
             continue

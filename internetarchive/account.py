@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-import requests
+import httpx2
 
 from internetarchive import get_session
 from internetarchive.exceptions import AccountAPIError
@@ -65,7 +65,7 @@ class Account:
         params: dict[str, str],
         data: dict[str, str],
         session: ArchiveSession | None = None,
-    ) -> requests.Response:
+    ) -> httpx2.Response:
         """Make a POST request to the Account API.
 
         :param endpoint: The API endpoint to call.
@@ -73,7 +73,7 @@ class Account:
         :param data: Data to send in the request body.
         :param session: Optional session to use. Defaults to ``self.session``.
         :returns: The response from the API.
-        :raises requests.exceptions.RequestException: If the API request fails.
+        :raises httpx2.RequestError: If the API request fails.
         """
         session = session or self.session
         url = f'https://{session.host}{endpoint}'  # type: ignore[attr-defined]
@@ -113,7 +113,7 @@ class Account:
         :param identifier: The value of the identifier (e.g., ``'foo@example.com'``).
         :param session: Optional session to use for the request.
         :returns: A dictionary containing the account data.
-        :raises requests.exceptions.RequestException: If the API request fails.
+        :raises httpx2.RequestError: If the API request fails.
         :raises AccountAPIError: If the API response is invalid or missing required data.
         """
         data = {identifier_type: identifier}
@@ -130,7 +130,7 @@ class Account:
             if j.get("error") or not j.get("values"):
                 raise AccountAPIError(j.get("error", "Unknown error"), error_data=j)
             return j["values"]
-        except requests.exceptions.RequestException as e:
+        except httpx2.HTTPError as e:
             raise AccountAPIError(f"Failed to fetch account data: {e}")
 
     @classmethod
@@ -187,7 +187,7 @@ class Account:
 
     def lock(
         self, comment: str | None = None, session: ArchiveSession | None = None
-    ) -> requests.Response:
+    ) -> httpx2.Response:
         """Lock the account.
 
         :param comment: An optional comment for the lock operation.
@@ -206,7 +206,7 @@ class Account:
 
     def unlock(
         self, comment: str | None = None, session: ArchiveSession | None = None
-    ) -> requests.Response:
+    ) -> httpx2.Response:
         """Unlock the account.
 
         :param comment: An optional comment for the unlock operation.

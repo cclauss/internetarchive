@@ -5,8 +5,8 @@ import types
 from copy import deepcopy
 
 import pytest
-import responses
-from requests.exceptions import ConnectionError, HTTPError
+from httpx2 import ConnectError as ConnectionError
+from httpx2 import HTTPStatusError as HTTPError
 
 import internetarchive.files
 from internetarchive import get_session
@@ -21,6 +21,7 @@ from tests.conftest import (
     load_file,
     load_test_data_file,
 )
+from tests.httpx2_mock import responses
 
 S3_URL = f'{PROTOCOL}//s3.us.archive.org/'
 S3_URL_RE = re.compile(r'.*s3\.us\.archive\.org/.*')
@@ -756,15 +757,16 @@ def test_modify_metadata(nasa_item, nasa_metadata):
             '-target': 'metadata',
             '-patch': _patch,
         }
-        assert set(p.data.keys()) == set(expected_data.keys())
-        assert p.data['priority'] == expected_data['priority']
-        assert p.data['-target'] == expected_data['-target']
-        assert all(v in p.data['-patch'] for v in ['/foo', 'bar'])
+        p_content = p.json()
+        assert set(p_content.keys()) == set(expected_data.keys())
+        assert p_content['priority'] == expected_data['priority']
+        assert p_content['-target'] == expected_data['-target']
+        assert all(v in p_content['-patch'] for v in ['/foo', 'bar'])
         # Test no changes.
         md = {'title': 'NASA Images'}
         p = nasa_item.modify_metadata(md, debug=True)
         expected_data = {'priority': -5, '-target': 'metadata', '-patch': '[]'}
-        assert p.data == expected_data
+        assert p.json() == expected_data
 
         md = {'title': 'REMOVE_TAG'}
         p = nasa_item.modify_metadata(md, debug=True)
@@ -773,11 +775,12 @@ def test_modify_metadata(nasa_item, nasa_metadata):
             '-target': 'metadata',
             '-patch': json.dumps([{'remove': '/title'}]),
         }
-        assert set(p.data.keys()) == set(expected_data.keys())
-        assert p.data['priority'] == expected_data['priority']
-        assert p.data['-target'] == expected_data['-target']
-        assert '/title' in str(p.data['-patch'])
-        assert 'remove' in str(p.data['-patch'])
+        p_content = p.json()
+        assert set(p_content.keys()) == set(expected_data.keys())
+        assert p_content['priority'] == expected_data['priority']
+        assert p_content['-target'] == expected_data['-target']
+        assert '/title' in str(p_content['-patch'])
+        assert 'remove' in str(p_content['-patch'])
 
         # Test add array.
         md = {'subject': ['one', 'two', 'last']}
@@ -789,12 +792,13 @@ def test_modify_metadata(nasa_item, nasa_metadata):
                 [{'add': '/subject', 'value': ['one', 'two', 'last']}]
             ),
         }
-        assert set(p.data.keys()) == set(expected_data.keys())
-        assert p.data['priority'] == expected_data['priority']
-        assert p.data['-target'] == expected_data['-target']
+        p_content = p.json()
+        assert set(p_content.keys()) == set(expected_data.keys())
+        assert p_content['priority'] == expected_data['priority']
+        assert p_content['-target'] == expected_data['-target']
         assert '["one", "two", "last"]' in str(
-            p.data['-patch']
-        ) or '["one","two","last"]' in str(p.data['-patch'])
+            p_content['-patch']
+        ) or '["one","two","last"]' in str(p_content['-patch'])
 
         # Test indexed mod.
         nasa_item.item_metadata['metadata']['subject'] = ['first', 'middle', 'last']
@@ -807,15 +811,19 @@ def test_modify_metadata(nasa_item, nasa_metadata):
         }
 
         # Avoid comparing the json strings, because they are not in a canonical form
-        assert set(p.data.keys()) == set(expected_data.keys())
-        assert all(p.data[k] == expected_data[k] for k in ['priority', '-target'])
-        assert '/subject/2' in p.data['-patch'] or r'\/subject\/2' in p.data['-patch']
+        p_content = p.json()
+        assert set(p_content.keys()) == set(expected_data.keys())
+        assert all(p_content[k] == expected_data[k] for k in ['priority', '-target'])
+        assert (
+            '/subject/2' in p.content['-patch']
+            or r'\/subject\/2' in p.content['-patch']
+        )
 
         # Test priority.
         md = {'title': 'NASA Images'}
         p = nasa_item.modify_metadata(md, priority=3, debug=True)
         expected_data = {'priority': 3, '-target': 'metadata', '-patch': '[]'}
-        assert p.data == expected_data
+        assert p.content == expected_data
 
         # Test auth.
         md = {'title': 'NASA Images'}

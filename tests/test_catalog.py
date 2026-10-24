@@ -1,13 +1,13 @@
 import json
 
+import httpx2
 import pytest
-import requests
-import responses
 
 import internetarchive.catalog as catalog_mod
 from internetarchive import get_session
 from internetarchive.catalog import Catalog, CatalogTask
 from tests.conftest import IaRequestsMock
+from tests.httpx2_mock import responses
 
 TASKS_URL = 'https://archive.org/services/tasks.php'
 
@@ -475,38 +475,38 @@ def test_session_follow_task_log(monkeypatch):
 
 def _http_error(status):
     """Build an HTTPError with an attached response of the given status."""
-    resp = requests.models.Response()
-    resp.status_code = status
-    return requests.exceptions.HTTPError(response=resp)
+    request = httpx2.Request('GET', TASKS_URL)
+    response = httpx2.Response(status, request=request)
+    return httpx2.HTTPStatusError(f'HTTP {status}', request=request, response=response)
 
 
 def test_is_transient_error():
     """Network blips, timeouts and 5xx retry; 4xx and everything else is fatal."""
+    assert catalog_mod._is_transient_error(httpx2.ConnectError('reset')) is True
     assert (
-        catalog_mod._is_transient_error(requests.exceptions.ConnectionError('reset'))
+        catalog_mod._is_transient_error(httpx2.RemoteProtocolError('premature end'))
         is True
     )
-    assert (
-        catalog_mod._is_transient_error(
-            requests.exceptions.ChunkedEncodingError('premature end')
-        )
-        is True
-    )
-    assert (
-        catalog_mod._is_transient_error(requests.exceptions.Timeout('timed out'))
-        is True
-    )
+    assert catalog_mod._is_transient_error(httpx2.TimeoutException('timed out')) is True
     assert catalog_mod._is_transient_error(_http_error(500)) is True
     assert catalog_mod._is_transient_error(_http_error(503)) is True
     assert catalog_mod._is_transient_error(_http_error(403)) is False
     assert catalog_mod._is_transient_error(_http_error(404)) is False
     # An HTTPError with no attached response is fatal.
     assert (
-        catalog_mod._is_transient_error(requests.exceptions.HTTPError('no response'))
+        catalog_mod._is_transient_error(
+            httpx2.HTTPStatusError(
+                'no response',
+                request=httpx2.Request('GET', TASKS_URL),
+                response=httpx2.Response(400, request=httpx2.Request('GET', TASKS_URL)),
+            )
+        )
         is False
     )
     assert (
-        catalog_mod._is_transient_error(requests.exceptions.RequestException('other'))
+        catalog_mod._is_transient_error(
+            httpx2.RequestError('other', request=httpx2.Request('GET', TASKS_URL))
+        )
         is False
     )
 
@@ -524,7 +524,7 @@ def test_follow_task_log_recovers_from_transient_error(monkeypatch):
         rsps.add(
             responses.GET,
             TASKS_URL,
-            body=requests.exceptions.ConnectionError('reset'),
+            body=httpx2.ConnectError('reset'),
             match=[responses.matchers.query_param_matcher({'task_log': '123'})],
         )
         rsps.add(
@@ -585,10 +585,10 @@ def test_follow_task_log_persistent_errors_raise(monkeypatch):
             rsps.add(
                 responses.GET,
                 TASKS_URL,
-                body=requests.exceptions.ConnectionError('reset'),
+                body=httpx2.ConnectError('reset'),
                 match=[responses.matchers.query_param_matcher({'task_log': '123'})],
             )
-        with pytest.raises(requests.exceptions.ConnectionError):
+        with pytest.raises(httpx2.ConnectError):
             list(CatalogTask.follow_task_log(123, _session()))
         # All N registered failures were consumed: N-1 retries + 1 fatal.
         assert len(rsps.calls) == catalog_mod.FOLLOW_MAX_CONSECUTIVE_ERRORS
@@ -604,6 +604,6 @@ def test_follow_task_log_4xx_is_fatal(monkeypatch):
             status=403,
             match=[responses.matchers.query_param_matcher({'task_log': '123'})],
         )
-        with pytest.raises(requests.exceptions.HTTPError):
+        with pytest.raises(httpx2.HTTPStatusError):
             list(CatalogTask.follow_task_log(123, _session()))
         assert len(rsps.calls) == 1

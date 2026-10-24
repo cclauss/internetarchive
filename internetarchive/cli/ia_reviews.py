@@ -22,7 +22,7 @@ ia_reviews.py
 import argparse
 import sys
 
-from requests.exceptions import HTTPError
+from httpx2 import HTTPStatusError as HTTPError
 
 
 def setup(subparsers):

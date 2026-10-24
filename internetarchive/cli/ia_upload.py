@@ -29,7 +29,7 @@ from locale import getpreferredencoding
 from tempfile import TemporaryFile
 from typing import Union
 
-from requests.exceptions import HTTPError
+from httpx2 import HTTPStatusError as HTTPError
 
 from internetarchive.cli.cli_utils import (
     MetadataAction,

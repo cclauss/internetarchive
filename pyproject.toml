@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
   "jsonpatch>=0.4",
-  "requests>=2.25.0,<3.0.0",
+  "httpx2>=2.14.0,<3.0.0",
   "tqdm>=4.0.0",
   "urllib3>=1.26.0",
 ]
@@ -55,7 +55,7 @@ docs = [
 ]
 test = [
   "pytest==9.0.3",
-  "responses==0.26.1",
+  "httpx2-pytest>=2.0.0,<3.0.0",
   "ruff==0.14.1",
 ]
 types = [
@@ -63,7 +63,6 @@ types = [
   "types-colorama",
   "types-jsonpatch>=0.1.0a0",
   "types-pygments",
-  "types-requests>=2.25.0,<3.0.0",
   "types-ujson>=4.2.0",
   "types-urllib3>=1.26.0",
 ]

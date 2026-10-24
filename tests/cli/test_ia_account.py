@@ -1,8 +1,7 @@
 import json
 
-import responses
-
 from tests.conftest import IaRequestsMock, ia_call
+from tests.httpx2_mock import responses
 
 XAUTHN_URL = 'https://archive.org/services/xauthn/'
 

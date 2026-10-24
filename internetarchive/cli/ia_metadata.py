@@ -28,7 +28,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from copy import copy
 
-from requests import Request, Response
+from httpx2 import Request, Response
 
 from internetarchive import item
 from internetarchive.cli.cli_utils import MetadataAction, QueryStringAction

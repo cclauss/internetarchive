@@ -1,7 +1,6 @@
-import responses
-
 from internetarchive.utils import json
 from tests.conftest import PROTOCOL, IaRequestsMock, ia_call, load_test_data_file
+from tests.httpx2_mock import responses
 
 
 def test_ia_search_itemlist(capsys):

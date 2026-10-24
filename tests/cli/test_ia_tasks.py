@@ -1,10 +1,10 @@
 import json
 
-import requests
-import responses
+import httpx2
 
 import internetarchive.catalog as catalog_mod
 from tests.conftest import IaRequestsMock, ia_call
+from tests.httpx2_mock import responses
 
 TASKS_URL = 'https://archive.org/services/tasks.php'
 
@@ -207,7 +207,7 @@ def test_ia_tasks_follow_task_log_request_error(capsys, monkeypatch):
             rsps.add(
                 responses.GET,
                 TASKS_URL,
-                body=requests.exceptions.ConnectionError('connection reset'),
+                body=httpx2.ConnectError('connection reset'),
                 match=[responses.matchers.query_param_matcher({'task_log': '123'})],
             )
         ia_call(['ia', 'tasks', '-f', '123'], expected_exit_code=1)

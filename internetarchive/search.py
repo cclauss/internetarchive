@@ -30,7 +30,7 @@ search engine.
 import itertools
 from logging import getLogger
 
-from requests.exceptions import ReadTimeout
+from httpx2 import ReadTimeout
 
 from internetarchive.auth import S3Auth
 
@@ -75,7 +75,7 @@ class Search:
         :param params: Additional URL parameters for the search API.
         :param full_text_search: Enable full-text search (beta).
         :param dsl_fts: Use DSL mode for full-text search queries.
-        :param request_kwargs: Keyword arguments passed to requests.
+        :param request_kwargs: Keyword arguments passed to HTTPX2.
         :param max_retries: Maximum number of retries for failed requests.
                            Defaults to 5.
         """
